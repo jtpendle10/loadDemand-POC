@@ -2,53 +2,37 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Load Duration Curve (Last 30 Days, 15-min intervals)</title>
-
-  <!-- 1. Load Highcharts -->
+  <title>Load Duration Curve (Colored Zones)</title>
   <script src="https://code.highcharts.com/highcharts.js"></script>
-
-  <!-- 2. Your mapping (sankeyMapping) -->
   <script src="mapping.js"></script>
-
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 2rem;
-      text-align: center;
-    }
-    #curve_div {
-      width: 100%;
-      max-width: 900px;
-      height: 500px;
-      margin: 0 auto;
-    }
+    body { font-family:Arial, sans-serif; margin:2rem; text-align:center }
+    #curve_div { width:100%; max-width:900px; height:500px; margin:0 auto }
   </style>
 </head>
 <body>
-  <h2>Gore Facility Load Duration Curve<br>(Last 30 Days @ 15-min intervals)</h2>
+  <h2>Load Duration Curve (Last 30 Days, 15-min)</h2>
   <div id="curve_div">Loading…</div>
 
   <script>
-    // Fetch a 30-day series at 15-minute sampling
+    // — your existing fetchSeries(...) here (same as before) —
     async function fetchSeries(entry) {
       const now  = new Date();
-      const from = new Date(now.getTime() - 30*24*60*60*1000);
+      const from = new Date(now - 30*24*3600*1000);
       const body = {
         query: `
           query($ds:String!,$name:String!,$from:String!,$to:String!,
                 $agg:MetricDataAggregationMethod!,$window:String!,$samplingWindow:String!) {
             dataPoint(dataSourceName:$ds,name:$name){
-              data(
-                from:$from,to:$to,
-                aggregation:$agg,window:$window,
-                samplingWindow:$samplingWindow
-              ){
+              data(from:$from, to:$to,
+                   aggregation:$agg, window:$window,
+                   samplingWindow:$samplingWindow){
                 nodes { time data }
               }
             }
           }
         `,
-        variables: {
+        variables:{
           ds:            entry.dataSourceName,
           name:          entry.metricName,
           from:          from.toISOString(),
@@ -58,63 +42,76 @@
           samplingWindow:"15 minutes"
         }
       };
-
-      const resp = await fetch(
-        'https://sankey-proxy.onrender.com/api/graphql',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(body)
-        }
-      );
+      const resp = await fetch('https://sankey-proxy.onrender.com/api/graphql',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      });
       const json  = await resp.json();
-      const nodes = json?.data?.dataPoint?.data?.nodes || [];
-      // [ timestamp(ms), value ]
-      return nodes.map(n => [ Date.parse(n.time), n.data ]);
+      const nodes = json?.data?.dataPoint?.data?.nodes||[];
+      return nodes.map(n=>[ Date.parse(n.time), n.data ]);
     }
 
     async function drawDurationCurve() {
-      // Find mapping entries
-      const elec = sankeyMapping.find(e => e.system === "Main Electric");
-      const gas  = sankeyMapping.find(e => e.system === "Main Gas");
+      // 1) get the two mains
+      const elec = sankeyMapping.find(e=>e.system==="Main Electric");
+      const gas  = sankeyMapping.find(e=>e.system==="Main Gas");
 
-      // Fetch both in parallel
+      // 2) fetch both series
       const [sE, sG] = await Promise.all([ fetchSeries(elec), fetchSeries(gas) ]);
 
-      // Sum them by timestamp
+      // 3) sum them into a lookup
       const sumMap = {};
-      sE.forEach(([t,v]) => { sumMap[t] = (sumMap[t]||0) + v; });
-      sG.forEach(([t,v]) => { sumMap[t] = (sumMap[t]||0) + v; });
+      sE.forEach(([t,v])=> sumMap[t]=(sumMap[t]||0)+v);
+      sG.forEach(([t,v])=> sumMap[t]=(sumMap[t]||0)+v);
 
-      // Extract values, sort descending
-      const sortedVals = Object.values(sumMap).sort((a,b) => b - a);
+      // 4) extract & sort descending
+      const sorted = Object.values(sumMap).sort((a,b)=>b-a);
 
-      // Build [ percentOfTime, demand ] points
-      const pts = sortedVals.map((v, i) => {
-        const pct = (i / (sortedVals.length - 1)) * 100;
-        return [ parseFloat(pct.toFixed(2)), parseFloat(v.toFixed(2)) ];
-      });
+      // 5) prepare the duration-curve points [percent, demand]
+      const n = sorted.length;
+      const pts = sorted.map((v,i)=>[
+        parseFloat(((i/(n-1))*100).toFixed(2)),
+        parseFloat(v.toFixed(2))
+      ]);
 
-      // Draw Highcharts line: x=percent, y=demand
+      // 6) define your thresholds:
+      //    e.g. baseload = bottom 10% demand, peaking = top 5% demand 
+      //    (you can calculate these dynamically too)
+      const baseloadThreshold     = sorted[Math.floor(n*0.90)]; // 90% point
+      const peakingThreshold      = sorted[Math.floor(n*0.05)]; // 5% point
+
+      // 7) draw as an AREA with zones on the Y axis:
       Highcharts.chart('curve_div', {
-        chart: { type: 'line' },
+        chart: { type: 'area' },
         title: { text: '' },
         xAxis: {
           title: { text: 'Percent of Time (%)' },
-          min: 0,
-          max: 100
+          min: 0, max: 100
         },
         yAxis: {
           title: { text: 'Combined Load Demand' }
         },
         tooltip: {
           headerFormat: '',
-          pointFormat: '<b>{point.y:.1f}</b> at {point.x:.2f}% of time'
+          pointFormat: '<b>{point.y:.1f}</b> at {point.x:.2f}%'
+        },
+        plotOptions: {
+          series: {
+            zoneAxis: 'y',
+            zones: [
+              { value: baseloadThreshold, color: '#c0392b' },   // red
+              { value: peakingThreshold,  color: '#27ae60' },   // green
+              {                    color: '#8e44ad' }            // purple
+            ],
+            fillOpacity: 0.7,
+            marker: { enabled: false }
+          }
         },
         series: [{
           name: 'Load Duration',
           data: pts,
-          marker: { enabled: false }
+          showInLegend: false
         }],
         credits: { enabled: false }
       });
