@@ -78,7 +78,7 @@
       // 6) define your thresholds:
       //    e.g. baseload = bottom 10% demand, peaking = top 5% demand 
       //    (you can calculate these dynamically too)
-      const baseloadThreshold     = sorted[Math.floor(n)]; // last point
+      const baseloadThreshold     = sorted[Math.floor(n-1)]; // last point
       const peakingThreshold      = sorted[Math.floor(n*0.05)]; // 5% point
 
       // 7) draw as an AREA with zones on the Y axis:
