@@ -79,7 +79,7 @@
       //    e.g. baseload = bottom 10% demand, peaking = top 5% demand 
       //    (you can calculate these dynamically too)
       const baseloadThreshold     = sorted[Math.floor(n*0.90)]; // 90% point
-      const peakingThreshold      = sorted[Math.floor(n*0.05)]; // 5% point
+      const peakingThreshold      = sorted[Math.floor(n*0.00)]; // 5% point
 
       // 7) draw as an AREA with zones on the Y axis:
       Highcharts.chart('curve_div', {
